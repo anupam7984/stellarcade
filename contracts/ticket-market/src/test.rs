@@ -325,3 +325,30 @@ fn test_purchase_cooldown_unknown_listing() {
     assert!(!cooldown.is_purchasable);
     assert_eq!(cooldown.cooldown_remaining, 0);
 }
+
+#[test]
+fn test_fill_listing_atomic_and_rejections() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, _token, seller) = setup(&env);
+
+    let listing_id = client.list_ticket(&seller, &game_id(&env), &500i128, &1_500u32);
+
+    // Non-existent listing fails
+    let err_nf = client.try_fill_listing(&9999u64);
+    assert_eq!(err_nf, Err(Ok(Error::ListingNotFound)));
+
+    // Admin fills successfully
+    let res = client.try_fill_listing(&listing_id);
+    assert!(res.is_ok());
+
+    // Duplicate fill fails (atomic sale)
+    let err2 = client.try_fill_listing(&listing_id);
+    assert_eq!(err2, Err(Ok(Error::ListingNotActive)));
+
+    // Cancelled listing cannot be filled
+    let listing_id2 = client.list_ticket(&seller, &game_id(&env), &300i128, &1_500u32);
+    client.cancel_listing(&seller, &listing_id2);
+    let err3 = client.try_fill_listing(&listing_id2);
+    assert_eq!(err3, Err(Ok(Error::ListingNotActive)));
+}
