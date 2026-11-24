@@ -329,3 +329,44 @@ fn test_signer_readiness_preconfiguration() {
     assert!(!readiness.can_administer_queue);
     assert_eq!(readiness.queue_depth, 0);
 }
+
+#[test]
+fn test_replayed_entries_do_not_strand_fifo_progress() {
+    let s = setup();
+    let user = Address::generate(&s.env);
+
+    let s0 = symbol_short!("s0");
+    let s1 = symbol_short!("s1");
+    let s2 = symbol_short!("s2");
+
+    s.client
+        .enqueue_settlement(&s0, &user, &100, &symbol_short!("test"));
+    s.client
+        .enqueue_settlement(&s1, &user, &200, &symbol_short!("test"));
+    s.client
+        .enqueue_settlement(&s2, &user, &300, &symbol_short!("test"));
+
+    // Process s0
+    let p0 = s.client.process_next(&1);
+    assert_eq!(p0, 1);
+
+    // Fail s1
+    s.client.mark_failed(&s1, &500);
+
+    // Replay failed s1 to tail
+    s.client.replay_settlement(&s.admin, &s1);
+
+    // Process remaining items (failed s1 slot skipped, s2 processed, replayed s1 processed)
+    let p_rest = s.client.process_next(&3);
+    assert_eq!(p_rest, 3);
+
+    // Assert batch status and FIFO progress consistency
+    let status = s.client.get_batch_status(&0, &3);
+    assert_eq!(status.succeeded, 4); // s0, s1 (slot 1), s2, s1 (slot 3)
+    assert_eq!(status.failed, 0);
+    assert_eq!(status.pending, 0);
+
+    let metrics = s.client.queue_metrics();
+    assert_eq!(metrics.depth, 0);
+    assert!(metrics.oldest_pending.is_none());
+}

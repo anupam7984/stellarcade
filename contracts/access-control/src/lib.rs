@@ -17,6 +17,9 @@ pub const OPERATOR: Symbol = symbol_short!("OPERATOR");
 pub const PAUSER: Symbol = symbol_short!("PAUSER");
 pub const GAME: Symbol = symbol_short!("GAME");
 
+pub const LIFETIME_THRESHOLD: u32 = 17_280;
+pub const BUMP_AMOUNT: u32 = 518_400;
+
 // ── Events ────────────────────────────────────────────────────────
 #[contractevent]
 pub struct RoleGranted {
@@ -78,9 +81,15 @@ impl AccessControl {
         let members: Vec<Address> = env
             .storage()
             .persistent()
-            .get(&DataKey::RoleMembers(role))
+            .get(&DataKey::RoleMembers(role.clone()))
             .unwrap_or_else(|| Vec::new(&env));
-        members.len()
+        let mut count = 0u32;
+        for m in members.iter() {
+            if internal_has_role(&env, role.clone(), m) {
+                count += 1;
+            }
+        }
+        count
     }
 
     /// Returns a bounded, deterministically-ordered slice of accounts that hold
@@ -90,13 +99,19 @@ impl AccessControl {
         let members: Vec<Address> = env
             .storage()
             .persistent()
-            .get(&DataKey::RoleMembers(role))
+            .get(&DataKey::RoleMembers(role.clone()))
             .unwrap_or_else(|| Vec::new(&env));
-        let total = members.len();
+        let mut active = Vec::new(&env);
+        for m in members.iter() {
+            if internal_has_role(&env, role.clone(), m.clone()) {
+                active.push_back(m);
+            }
+        }
+        let total = active.len();
         let mut result = Vec::new(&env);
         let end = start.saturating_add(limit).min(total);
         for i in start..end {
-            if let Some(addr) = members.get(i) {
+            if let Some(addr) = active.get(i) {
                 result.push_back(addr);
             }
         }
@@ -125,22 +140,42 @@ pub fn require_role(env: &Env, role: Symbol, account: Address) {
 
 pub fn internal_grant_role(env: &Env, role: Symbol, account: Address) {
     let key = DataKey::Role(role.clone(), account.clone());
+    let members_key = DataKey::RoleMembers(role.clone());
     if !env.storage().persistent().has(&key) {
         env.storage().persistent().set(&key, &());
 
-        // Maintain ordered member list
-        let members_key = DataKey::RoleMembers(role.clone());
+        // Maintain ordered member list without duplicates
         let mut members: Vec<Address> = env
             .storage()
             .persistent()
             .get(&members_key)
             .unwrap_or_else(|| Vec::new(env));
-        members.push_back(account.clone());
-        env.storage().persistent().set(&members_key, &members);
+        let mut exists = false;
+        for m in members.iter() {
+            if m == account {
+                exists = true;
+                break;
+            }
+        }
+        if !exists {
+            members.push_back(account.clone());
+            env.storage().persistent().set(&members_key, &members);
+        }
 
         // Emit role change event
-        RoleGranted { role, account }.publish(env);
+        RoleGranted {
+            role: role.clone(),
+            account: account.clone(),
+        }
+        .publish(env);
     }
+    // Keep role membership and enumeration TTL consistent
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, LIFETIME_THRESHOLD, BUMP_AMOUNT);
+    env.storage()
+        .persistent()
+        .extend_ttl(&members_key, LIFETIME_THRESHOLD, BUMP_AMOUNT);
 }
 
 pub fn internal_revoke_role(env: &Env, role: Symbol, account: Address) {

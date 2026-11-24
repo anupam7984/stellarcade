@@ -151,3 +151,42 @@ fn test_cannot_withdraw_from_cancelled_stream() {
 
     client.withdraw_from_stream(&stream_id, &recipient, &1);
 }
+
+#[test]
+fn test_cancellation_rounding_at_start_and_end_boundaries() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, sender, recipient) = setup(&env);
+
+    // 1. Indivisible deposit across duration: deposit = 100, duration = 30 seconds (1000..1030)
+    env.ledger().with_mut(|l| l.timestamp = 900);
+    let s1 = client.create_stream(&sender, &recipient, &100, &1000, &1030);
+
+    // Cancellation before start (t=950): sender gets full refund, recipient gets 0
+    env.ledger().with_mut(|l| l.timestamp = 950);
+    let (refund1, payout1) = client.cancel_stream(&s1, &sender);
+    assert_eq!(refund1, 100);
+    assert_eq!(payout1, 0);
+
+    // 2. Cancellation exactly at start boundary (t=1000)
+    let s2 = client.create_stream(&sender, &recipient, &100, &1000, &1030);
+    env.ledger().with_mut(|l| l.timestamp = 1000);
+    let (refund2, payout2) = client.cancel_stream(&s2, &recipient);
+    assert_eq!(refund2, 100);
+    assert_eq!(payout2, 0);
+
+    // 3. Midpoint with integer division remainder: at t=1010 (10/30 elapsed -> streamed = 100 * 10 / 30 = 33)
+    let s3 = client.create_stream(&sender, &recipient, &100, &1000, &1030);
+    env.ledger().with_mut(|l| l.timestamp = 1010);
+    let (refund3, payout3) = client.cancel_stream(&s3, &sender);
+    assert_eq!(payout3, 33);
+    assert_eq!(refund3, 67);
+    assert_eq!(payout3 + refund3, 100);
+
+    // 4. Cancellation at/after stop boundary (t=1035 >= 1030)
+    let s4 = client.create_stream(&sender, &recipient, &100, &1000, &1030);
+    env.ledger().with_mut(|l| l.timestamp = 1035);
+    let (refund4, payout4) = client.cancel_stream(&s4, &recipient);
+    assert_eq!(payout4, 100);
+    assert_eq!(refund4, 0);
+}

@@ -398,3 +398,28 @@ fn test_route_timeout_accessor_missing_route() {
     assert!(!accessor.exists);
     assert!(!accessor.timed_out);
 }
+
+#[test]
+fn test_acknowledge_unauthorized_target_rejected_and_state_unchanged() {
+    let env = Env::default();
+    let (client, admin, _, source, target) = setup(&env);
+    env.mock_all_auths();
+    let route_id = client.register_route(&admin, &source, &target, &Symbol::new(&env, "handle"));
+    let request_id = Symbol::new(&env, "req1");
+    let payload = Bytes::from_slice(&env, &[1, 2, 3]);
+    client.dispatch(&source, &request_id, &route_id, &payload);
+
+    let wrong_target = Address::generate(&env);
+    let result = client.try_acknowledge(
+        &wrong_target,
+        &request_id,
+        &Bytes::from_slice(&env, &[9, 9]),
+    );
+    assert!(result.is_err());
+
+    let status_after = client.get_call_status(&request_id);
+    assert_eq!(
+        status_after.status,
+        RequestStatus::Pending(route_id, payload)
+    );
+}

@@ -236,3 +236,73 @@ fn test_list_role_members_empty() {
     let members: Vec<Address> = client.list_role_members(&GAME, &0, &10);
     assert_eq!(members.len(), 0);
 }
+
+#[test]
+fn test_ttl_expiry_and_enumeration_consistency() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+    client.init(&admin);
+
+    client.grant_role(&OPERATOR, &user1);
+    client.grant_role(&OPERATOR, &user2);
+
+    assert_eq!(client.role_member_count(&OPERATOR), 2);
+    assert_eq!(client.list_role_members(&OPERATOR, &0, &10).len(), 2);
+
+    // Simulate TTL expiry of user1 role key
+    env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .remove(&DataKey::Role(OPERATOR, user1.clone()));
+    });
+
+    assert!(!client.has_role(&OPERATOR, &user1));
+    assert!(client.has_role(&OPERATOR, &user2));
+    assert_eq!(client.role_member_count(&OPERATOR), 1);
+
+    let active = client.list_role_members(&OPERATOR, &0, &10);
+    assert_eq!(active.len(), 1);
+    assert_eq!(active.get(0).unwrap(), user2);
+
+    // Renew/re-grant role to user1
+    client.grant_role(&OPERATOR, &user1);
+    assert!(client.has_role(&OPERATOR, &user1));
+    assert_eq!(client.role_member_count(&OPERATOR), 2);
+}
+
+#[test]
+fn test_non_admin_cannot_revoke_role() {
+    let env = Env::default();
+
+    let admin = Address::generate(&env);
+    let non_admin = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+    client.init(&admin);
+
+    env.mock_all_auths();
+    client.grant_role(&OPERATOR, &user);
+
+    // Attempt revoke as non_admin
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &non_admin,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "revoke_role",
+            args: vec![&env, OPERATOR.into_val(&env), user.into_val(&env)],
+            sub_invokes: &[],
+        },
+    }]);
+
+    let result = client.try_revoke_role(&OPERATOR, &user);
+    assert!(result.is_err());
+    assert!(client.has_role(&OPERATOR, &user));
+}
