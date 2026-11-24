@@ -517,4 +517,32 @@ mod test {
         assert_eq!(snap2.open_campaign_count, 1);
         assert_eq!(snap2.total_committed, 100);
     }
+
+    #[test]
+    fn test_cancellation_returns_only_unspent_commitments() {
+        let (env, admin, client) = setup();
+        let _b1 = register(&env, &client, &admin, 10, 1_000);
+        let sponsor = Address::generate(&env);
+        client.commit_funds(&sponsor, &10u64, &400i128);
+
+        // Settle campaign 10
+        client.settle(&admin, &10u64);
+
+        // Cancelling settled campaign fails
+        let err = client.try_cancel(&admin, &10u64);
+        assert!(err.is_err());
+
+        // Campaign 20: commit 300, then cancel
+        let _b2 = register(&env, &client, &admin, 20, 1_000);
+        client.commit_funds(&sponsor, &20u64, &300i128);
+        assert!(client.try_cancel(&admin, &20u64).is_ok());
+
+        // Repeated cancel fails
+        let err2 = client.try_cancel(&admin, &20u64);
+        assert!(err2.is_err());
+
+        // Summary correctly accounts for cancelled funds
+        let summary = client.committed_funds_summary();
+        assert_eq!(summary.lifetime_cancelled, 300);
+    }
 }

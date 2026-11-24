@@ -136,3 +136,32 @@ fn test_missing_entry() {
     assert!(entry.owner.is_none());
     assert_eq!(entry.status, TicketStatus::Pending);
 }
+
+#[test]
+fn test_redemption_markers_prevent_replay() {
+    let s = setup();
+    s.client.init(&s.admin, &s.token, &100, &10);
+    let user = Address::generate(&s.env);
+    let imposter = Address::generate(&s.env);
+
+    let ticket_id = 0u64;
+    s.client.submit_ticket(&user, &ticket_id);
+
+    // Imposter cannot redeem
+    let err = s.client.try_redeem_ticket(&imposter, &ticket_id);
+    assert_eq!(err, Err(Ok(Error::NotAuthorized)));
+
+    // User redeems successfully
+    assert!(s.client.try_redeem_ticket(&user, &ticket_id).is_ok());
+
+    // Replay / duplicate redemption rejected
+    let replay_err = s.client.try_redeem_ticket(&user, &ticket_id);
+    assert_eq!(replay_err, Err(Ok(Error::InvalidTicket)));
+
+    // Cancelled ticket cannot be redeemed
+    let ticket_id2 = 1u64;
+    s.client.submit_ticket(&user, &ticket_id2);
+    s.client.cancel_ticket(&s.admin, &ticket_id2);
+    let cancel_err = s.client.try_redeem_ticket(&user, &ticket_id2);
+    assert_eq!(cancel_err, Err(Ok(Error::InvalidTicket)));
+}

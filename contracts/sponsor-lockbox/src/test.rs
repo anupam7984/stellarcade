@@ -62,3 +62,39 @@ fn unlock_queue_accessor_reports_empty_defaults_when_unconfigured() {
     assert_eq!(queue.indexed_locks, 0);
     assert_eq!(queue.pending_count, 0);
 }
+
+#[test]
+fn test_release_and_cancel_mutually_exclusive() {
+    let (env, admin, client) = setup();
+    let sponsor = Address::generate(&env);
+    let beneficiary = Address::generate(&env);
+    let imposter = Address::generate(&env);
+
+    client.register_lock(&admin, &10u64, &sponsor, &beneficiary, &100i128, &2_000u64);
+    client.register_lock(&admin, &20u64, &sponsor, &beneficiary, &200i128, &2_000u64);
+
+    // Release before unlock time fails
+    env.ledger().set_timestamp(1_500);
+    let err_early = client.try_release(&beneficiary, &10u64);
+    assert_eq!(err_early, Err(Ok(Error::NotUnlockedYet)));
+
+    // Unauthorized beneficiary fails
+    env.ledger().set_timestamp(2_500);
+    let err_auth = client.try_release(&imposter, &10u64);
+    assert_eq!(err_auth, Err(Ok(Error::NotAuthorized)));
+
+    // Valid release
+    let res = client.release(&beneficiary, &10u64);
+    assert_eq!(res, 100);
+
+    // Cancel after release fails
+    let err_cancel = client.try_cancel(&admin, &10u64);
+    assert_eq!(err_cancel, Err(Ok(Error::AlreadyReleased)));
+
+    // Cancel lock 20
+    assert!(client.try_cancel(&admin, &20u64).is_ok());
+
+    // Release after cancel fails
+    let err_rel = client.try_release(&beneficiary, &20u64);
+    assert_eq!(err_rel, Err(Ok(Error::AlreadyCancelled)));
+}
