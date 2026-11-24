@@ -38,7 +38,7 @@ impl VaultClaims {
         env.storage().instance().set(&DataKey::Admin, &admin);
     }
 
-    
+    /// Register a new outstanding claim against the vault.
     pub fn register_claim(
         env: Env,
         admin: Address,
@@ -70,7 +70,7 @@ impl VaultClaims {
         bump_outstanding(&env, 1, amount);
     }
 
-    
+    /// Release an outstanding claim once its window has opened.
     pub fn release(env: Env, beneficiary: Address, claim_id: u64) -> i128 {
         beneficiary.require_auth();
         let mut claim = storage::get_claim(&env, claim_id).expect("Claim not found");
@@ -105,7 +105,11 @@ impl VaultClaims {
         bump_cancelled(&env, 1, claim.amount);
     }
 
-    
+    // ---------------------------------------------------------------------
+    // Read-only accessors (the body of issue #680)
+    // ---------------------------------------------------------------------
+
+    /// Aggregate snapshot of every outstanding / released / cancelled claim.
     pub fn outstanding_claim_summary(env: Env) -> OutstandingClaimSummary {
         let configured = env.storage().instance().has(&DataKey::Admin);
         OutstandingClaimSummary {
@@ -120,7 +124,9 @@ impl VaultClaims {
         }
     }
 
-    
+    /// Window snapshot for a single claim — collapses to the documented
+    /// fallback when the id is unknown or the vault is unconfigured so
+    /// frontend consumers can render without a separate lookup.
     pub fn release_window(env: Env, claim_id: u64) -> ReleaseWindow {
         let now = env.ledger().timestamp();
         let configured = env.storage().instance().has(&DataKey::Admin);
