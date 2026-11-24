@@ -55,10 +55,7 @@ impl TicketMarket {
         Ok(())
     }
 
-    // ── Listings ───────────────────────────────────────────────────────────────
-
-    /// Post a new ticket listing.
-    /// `expires_at_ledger` must be strictly greater than the current ledger.
+    
     pub fn list_ticket(
         env: Env,
         seller: Address,
@@ -89,7 +86,7 @@ impl TicketMarket {
         Ok(listing_id)
     }
 
-    /// Cancel a listing (seller only).
+   
     pub fn cancel_listing(env: Env, seller: Address, listing_id: u64) -> Result<(), Error> {
         seller.require_auth();
         let mut listing = storage::get_listing(&env, listing_id).ok_or(Error::ListingNotFound)?;
@@ -105,7 +102,7 @@ impl TicketMarket {
         Ok(())
     }
 
-    /// Mark a listing as sold (admin-only — called after successful payment).
+    
     pub fn fill_listing(env: Env, listing_id: u64) -> Result<(), Error> {
         let admin: Address = env
             .storage()
@@ -124,10 +121,7 @@ impl TicketMarket {
         Ok(())
     }
 
-    // ── Read-only accessors ────────────────────────────────────────────────────
-
-    /// Returns a live summary of the orderbook, including best/worst ask and
-    /// total volume across all non-expired active listings.
+    
     pub fn orderbook_summary(env: Env) -> OrderbookSummary {
         let current_ledger = env.ledger().sequence();
         let ids = storage::get_active_ids(&env);
